@@ -49,6 +49,7 @@ pub(crate) static THEME: Mutex<Theme> = Mutex::new(Theme {
     layer: cosmic_theme::Layer::Background,
     transparent: false,
     list_item_position: None,
+    menu_hot: false,
 });
 
 /// Currently-defined theme.
@@ -187,6 +188,8 @@ pub struct Theme {
     pub transparent: bool,
     /// Only meaningful for widgets that must be in a list. Otherwise it should be ignored.
     pub list_item_position: Option<(Alignment, usize)>,
+    /// Set while a menu draws the row under the pointer, under a menu [`Look`](crate::widget::menu::Look).
+    pub menu_hot: bool,
 }
 
 impl Theme {

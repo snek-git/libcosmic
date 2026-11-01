@@ -200,6 +200,9 @@ impl<Message: Clone + 'static> ContextMenu<'_, Message> {
                 anchor: cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Anchor::None,
                 gravity: cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity::BottomRight,
                 reactive: true,
+                // under a menu look the body, not the cursor mark's gutter, lands at the click
+                offset: crate::widget::menu::look()
+                    .map_or((0, 0), |_| (-(crate::widget::menu::GUTTER as i32), 0)),
                 ..Default::default()
             };
             let parent = self.window_id;

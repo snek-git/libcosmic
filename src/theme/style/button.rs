@@ -149,6 +149,17 @@ pub fn appearance(
             appearance.icon_color = Some(cosmic.background(theme.transparent).on.into());
             appearance.text_color = Some(cosmic.background(theme.transparent).on.into());
         }
+        // Under a menu look the menu draws the row's fill itself, and the theme says which row is hot
+        Button::MenuFolder | Button::MenuItem
+            if !disabled && crate::widget::menu::look().is_some() =>
+        {
+            let l = crate::widget::menu::look().unwrap();
+            let ink = if theme.menu_hot { l.light } else { l.text };
+            appearance.background = None;
+            appearance.icon_color = Some(ink);
+            appearance.text_color = Some(ink);
+            corner_radii = &cosmic.corner_radii.radius_0;
+        }
         Button::MenuFolder => {
             // Menu folders cannot be disabled, ignore customized icon and text color
             let component = &cosmic.background(theme.transparent).component;

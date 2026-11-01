@@ -472,6 +472,8 @@ where
                     cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Anchor::BottomLeft,
                 gravity,
                 reactive: true,
+                // under a menu look the body, not the cursor mark's gutter, lines up with the root
+                offset: super::look().map_or((0, 0), |_| (-(super::GUTTER as i32), 0)),
                 ..Default::default()
             };
             let parent = self.window_id;

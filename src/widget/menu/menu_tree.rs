@@ -11,6 +11,7 @@ use iced_widget::core::{Element, renderer};
 
 use crate::widget::menu::action::MenuAction;
 use crate::widget::menu::key_bind::KeyBind;
+use crate::widget::menu::look::{self, Kind, look};
 use crate::widget::{Button, RcElementWrapper, icon};
 use crate::{theme, widget};
 use iced_core::{Alignment, Length};
@@ -38,6 +39,8 @@ pub struct MenuTree<Message> {
     pub(crate) width: Option<u16>,
     /// The height of the menu tree
     pub(crate) height: Option<u16>,
+    /// How the row takes the pointer under a menu [`Look`](super::Look)
+    pub(crate) kind: Kind,
 }
 
 impl<Message: Clone + 'static> MenuTree<Message> {
@@ -49,7 +52,13 @@ impl<Message: Clone + 'static> MenuTree<Message> {
             children: Vec::new(),
             width: None,
             height: None,
+            kind: Kind::Inert,
         }
+    }
+
+    fn kind(mut self, kind: Kind) -> Self {
+        self.kind = kind;
+        self
     }
 
     /// Create a menu tree from a widget and a vector of sub trees
@@ -63,6 +72,7 @@ impl<Message: Clone + 'static> MenuTree<Message> {
             children: children.into_iter().map(Into::into).collect(),
             width: None,
             height: None,
+            kind: Kind::Row,
         }
     }
 
@@ -143,16 +153,65 @@ pub fn menu_button<'a, Message>(
 where
     Message: std::clone::Clone + 'a,
 {
+    let (height, padding) = match look() {
+        Some(_) => (look::ROW, [0, 12]),
+        None => (36.0, [4, 16]),
+    };
     widget::button::custom(
         widget::Row::from_vec(children)
             .align_y(Alignment::Center)
             .height(Length::Fill)
             .width(Length::Fill),
     )
-    .height(Length::Fixed(36.0))
-    .padding([4, 16])
+    .height(Length::Fixed(height))
+    .padding(padding)
     .width(Length::Fill)
     .class(theme::Button::MenuItem)
+}
+
+/// A header slab naming what the menu acts on: a light square and the name in caps on the dark.
+/// It takes no pointer. Without a menu [`Look`](super::Look) it is the name in plain text.
+#[must_use]
+pub fn menu_header<Message: Clone + 'static>(name: &str) -> MenuTree<Message> {
+    let label = widget::text(name.to_uppercase()).ellipsize(iced_core::text::Ellipsize::Middle(
+        iced_core::text::EllipsizeHeightLimit::Lines(1),
+    ));
+    let element: crate::Element<'static, Message> = match look() {
+        Some(l) => widget::container(
+            widget::row::with_children([
+                widget::container(widget::space::horizontal())
+                    .width(Length::Fixed(8.0))
+                    .height(Length::Fixed(8.0))
+                    .class(theme::Container::custom(move |_| {
+                        widget::container::Style {
+                            background: Some(l.light.into()),
+                            ..Default::default()
+                        }
+                    }))
+                    .into(),
+                label.into(),
+            ])
+            .spacing(10)
+            .align_y(Alignment::Center),
+        )
+        .height(Length::Fixed(look::HEADER))
+        .width(Length::Fill)
+        .padding([0, 10])
+        .align_y(Alignment::Center)
+        .class(theme::Container::custom(move |_| {
+            widget::container::Style {
+                background: Some(l.dark.into()),
+                text_color: Some(l.light),
+                ..Default::default()
+            }
+        }))
+        .into(),
+        None => widget::container(label)
+            .padding([4, 16])
+            .width(Length::Fill)
+            .into(),
+    };
+    MenuTree::from(element)
 }
 
 #[derive(Clone)]
@@ -217,6 +276,7 @@ pub struct Entry<A, L> {
     /// `Some` draws the check column
     checked: Option<bool>,
     enabled: bool,
+    urgent: bool,
     action: A,
 }
 
@@ -227,8 +287,16 @@ impl<A, L> Entry<A, L> {
             icon: IconSlot::None,
             checked: None,
             enabled: true,
+            urgent: false,
             action,
         }
+    }
+
+    /// A destructive entry: drawn in the urgent tone under a menu [`Look`](super::Look)
+    #[must_use]
+    pub fn urgent(mut self) -> Self {
+        self.urgent = true;
+        self
     }
 
     /// Draw a leading icon
@@ -293,6 +361,7 @@ fn entry_tree<
         icon,
         checked,
         enabled,
+        urgent,
         action,
     } = entry;
     let spacing = crate::theme::spacing();
@@ -354,20 +423,37 @@ fn entry_tree<
 
     let ellipsize =
         iced_core::text::Ellipsize::Middle(iced_core::text::EllipsizeHeightLimit::Lines(1));
-    items.push(widget::text(label.into()).ellipsize(ellipsize).into());
+    let mut label = widget::text(label.into()).ellipsize(ellipsize);
+    if urgent && enabled && look().is_some() {
+        label = label.class(theme::Text::Custom(urgent_style));
+    }
+    items.push(label.into());
     items.push(widget::space::horizontal().into());
-    items.push(
-        widget::text(key)
-            .class(key_class)
-            .ellipsize(ellipsize)
-            .into(),
-    );
+    // Under a look the keys are small caps, as the game sets its key hints
+    let key = match look() {
+        Some(_) => widget::text(key.replace(" + ", " ").to_uppercase()).size(9),
+        None => widget::text(key),
+    };
+    items.push(key.class(key_class).ellipsize(ellipsize).into());
 
     let mut button = menu_button(items);
+    let kind = match (enabled, urgent) {
+        (false, _) => Kind::Inert,
+        (true, false) => Kind::Row,
+        (true, true) => Kind::Urgent,
+    };
     if enabled {
         button = button.on_press(action.message());
     }
-    MenuTree::from(Element::from(button))
+    MenuTree::from(Element::from(button)).kind(kind)
+}
+
+/// A destructive label: the urgent tone at rest, the light on its urgent fill when hovered.
+fn urgent_style(theme: &crate::Theme) -> TextStyle {
+    TextStyle {
+        color: look().map(|l| if theme.menu_hot { l.light } else { l.urgent }),
+        ..Default::default()
+    }
 }
 
 /// Create a list of menu items from a vector of `MenuItem`.
@@ -390,6 +476,12 @@ pub fn menu_items<
     children: Vec<MenuItem<A, L>>,
 ) -> Vec<MenuTree<Message>> {
     fn key_style(theme: &crate::Theme) -> TextStyle {
+        if let Some(l) = look() {
+            return TextStyle {
+                color: Some(if theme.menu_hot { l.light } else { l.keys }),
+                ..Default::default()
+            };
+        }
         let mut color = theme.cosmic().background(theme.transparent).component.on;
         color.alpha *= 0.75;
         TextStyle {
@@ -400,11 +492,19 @@ pub fn menu_items<
     let key_class = theme::Text::Custom(key_style);
 
     let size = children.len();
+    let look = look();
+    // Under a look the body has 4px above its first row and below its last
+    let pad = || {
+        look.map(|_| {
+            MenuTree::<Message>::from(Element::from(
+                widget::space::vertical().height(Length::Fixed(4.0)),
+            ))
+        })
+    };
 
-    children
+    pad()
         .into_iter()
-        .enumerate()
-        .flat_map(|(i, item)| {
+        .chain(children.into_iter().enumerate().flat_map(|(i, item)| {
             let mut trees = vec![];
 
             match item {
@@ -460,14 +560,26 @@ pub fn menu_items<
                 MenuItem::Divider => {
                     // A divider at either end separates nothing
                     if i != 0 && i != size - 1 {
-                        trees.push(MenuTree::<Message>::from(Element::from(
-                            widget::divider::horizontal::light(),
-                        )));
+                        trees.push(MenuTree::<Message>::from(match look {
+                            Some(l) => Element::from(
+                                widget::container(widget::divider::horizontal::light().class(
+                                    theme::Rule::custom(move |_| iced_widget::rule::Style {
+                                        color: l.rule,
+                                        radius: 0.0.into(),
+                                        fill_mode: iced_widget::rule::FillMode::Padded(12),
+                                        snap: true,
+                                    }),
+                                ))
+                                .padding([4, 0]),
+                            ),
+                            None => Element::from(widget::divider::horizontal::light()),
+                        }));
                     }
                 }
             }
             trees
-        })
+        }))
+        .chain(pad())
         .collect()
 }
 

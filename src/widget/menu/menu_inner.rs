@@ -4,6 +4,7 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
+use super::look::{self, Kind, look};
 use super::menu_bar::MenuBarState;
 use super::menu_tree::MenuTree;
 #[cfg(wayland_platform)]
@@ -270,6 +271,9 @@ impl MenuBounds {
             let (cp, op) = aod.resolve(view_parent_bounds, children_size, viewport_size);
             if is_overlay {
                 (cp - overlay_offset, op - overlay_offset)
+            } else if look().is_some() {
+                // a popup of its own: the body starts after the cursor mark's gutter
+                (Point::new(look::GUTTER, 0.0), op - overlay_offset)
             } else {
                 (Point::ORIGIN, op - overlay_offset)
             }
@@ -536,6 +540,12 @@ impl<'b, Message: Clone + 'static> Menu<'b, Message> {
                 .map(|(_, l)| l)
                 .next()
                 .unwrap_or_default();
+
+            // a popup of its own also holds the cursor mark's gutter and the drop shadow
+            if !self.is_overlay && look().is_some() {
+                intrinsic_size.width += look::GUTTER + look::SHADOW;
+                intrinsic_size.height += look::SHADOW;
+            }
 
             // overlay space viewport rectangle
             Node::with_children(
@@ -818,6 +828,81 @@ impl<'b, Message: Clone + 'static> Menu<'b, Message> {
                             let end_index = slice.end_index;
 
                             let children_bounds = children_layout.bounds();
+
+                            if let Some(l) = look() {
+                                let quad = |bounds: Rectangle| renderer::Quad {
+                                    bounds,
+                                    border: Border::default(),
+                                    shadow: Shadow::default(),
+                                    snap: true,
+                                };
+                                let drop = Vector::new(look::SHADOW, look::SHADOW);
+                                let body =
+                                    children_bounds.intersection(&viewport).unwrap_or_default();
+                                r.fill_quad(quad(body + drop), l.shadow);
+                                r.fill_quad(quad(body), l.panel);
+
+                                // the row under the pointer: the dark (urgent for a destructive
+                                // entry) with its own drop shadow, the cursor mark pointing at it
+                                let hot = ms.index.filter(|i| {
+                                    (start_index..=end_index).contains(i)
+                                        && menu_roots.get(*i).is_some_and(|mt| mt.kind != Kind::Inert)
+                                });
+                                if let Some(active) = hot
+                                    && let Some(row) = children_layout
+                                        .children()
+                                        .nth(active - start_index)
+                                        .and_then(|lo| lo.bounds().intersection(&viewport))
+                                {
+                                    let fill = Rectangle {
+                                        x: row.x + 4.0,
+                                        width: row.width - 8.0,
+                                        ..row
+                                    };
+                                    let tone = if menu_roots[active].kind == Kind::Urgent {
+                                        l.urgent
+                                    } else {
+                                        l.dark
+                                    };
+                                    r.fill_quad(quad(fill + drop), l.shadow);
+                                    r.fill_quad(quad(fill), tone);
+                                    let origin = Point::new(
+                                        body.x - look::GUTTER,
+                                        (row.y + (row.height - 12.0) / 2.0).round(),
+                                    );
+                                    for (x, y, w, h) in look::cursor_mark() {
+                                        r.fill_quad(
+                                            quad(Rectangle::new(
+                                                origin + Vector::new(x, y),
+                                                Size::new(w, h),
+                                            )),
+                                            l.cursor,
+                                        );
+                                    }
+                                }
+
+                                if start_index < menu_roots.len() {
+                                    menu_roots[start_index..=end_index]
+                                        .iter()
+                                        .enumerate()
+                                        .zip(children_layout.children())
+                                        .for_each(|((i, mt), clo)| {
+                                            let mut t = theme.clone();
+                                            t.menu_hot = hot == Some(start_index + i);
+                                            mt.item.draw(
+                                                &state.tree.children[active_root[0]].children
+                                                    [mt.index],
+                                                r,
+                                                &t,
+                                                style,
+                                                clo,
+                                                view_cursor,
+                                                &body,
+                                            );
+                                        });
+                                }
+                                return;
+                            }
 
                             // draw menu background
                             // let bounds = pad_rectangle(children_bounds, styling.background_expand.into());
@@ -1136,6 +1221,8 @@ impl<Message: std::clone::Clone + 'static> Widget<Message, crate::Theme, crate::
                     cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Anchor::TopRight,
                 gravity,
                 reactive: true,
+                // under a menu look the body, not the cursor mark's gutter, meets the parent
+                offset: look().map_or((0, 0), |_| (-(look::GUTTER as i32), 0)),
                 ..Default::default()
             };
             // disable slide_x if it is set in the default
