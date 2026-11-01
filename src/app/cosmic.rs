@@ -560,7 +560,13 @@ where
         } else {
             let theme = THEME.lock().unwrap();
             if self.app.core().window.is_maximized && !theme.cosmic().frosted_maximized_apps {
-                crate::style::iced::application::style(theme.borrow())
+                let mut style = crate::style::iced::application::style(theme.borrow());
+                // A menu look draws its cursor mark and shadow beside the menu body, so the
+                // popups sharing this style must clear transparent; the app paints its own ground
+                if crate::widget::menu::look().is_some() {
+                    style.background_color = iced_core::Color::TRANSPARENT;
+                }
+                style
             } else {
                 theme::Style {
                     background_color: iced_core::Color::TRANSPARENT,
