@@ -172,6 +172,11 @@ impl<Message: Clone + Send + 'static> Toasts<Message> {
 
     /// Add a new [`Toast`]
     pub fn push(&mut self, toast: Toast<Message>) -> Task<Message> {
+        self.push_with_id(toast).1
+    }
+
+    /// Add a new [`Toast`] and return its id with the task, so it can be removed early.
+    pub fn push_with_id(&mut self, toast: Toast<Message>) -> (ToastId, Task<Message>) {
         while self.toasts.len() >= self.limit {
             self.toasts.remove(
                 self.queue
@@ -187,17 +192,16 @@ impl<Message: Clone + Send + 'static> Toasts<Message> {
         self.queue.push_back(id);
 
         #[cfg(feature = "tokio")]
-        {
+        let task = {
             let on_close = self.on_close;
             crate::task::future(async move {
                 tokio::time::sleep(duration).await;
                 on_close(id)
             })
-        }
+        };
         #[cfg(not(feature = "tokio"))]
-        {
-            Task::none()
-        }
+        let task = Task::none();
+        (id, task)
     }
 
     /// Remove a [`Toast`]
